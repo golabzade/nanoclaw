@@ -417,6 +417,7 @@ async function runQuery(
     prompt: stream,
     options: {
       cwd: '/workspace/group',
+      model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6',
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
@@ -445,6 +446,7 @@ async function runQuery(
             NANOCLAW_CHAT_JID: containerInput.chatJid,
             NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
+            GEMINI_API_KEY: sdkEnv.GEMINI_API_KEY || '',
           },
         },
       },
@@ -474,8 +476,30 @@ async function runQuery(
 
     if (message.type === 'result') {
       resultCount++;
-      const textResult = 'result' in message ? (message as { result?: string }).result : null;
+      const res = message as { result?: string; subtype?: string; total_cost_usd?: number; usage?: { input_tokens?: number; output_tokens?: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number }; duration_ms?: number };
+      const textResult = res.result || null;
       log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
+
+      // Append usage to group usage log for daily summary
+      if (res.subtype === 'success' && res.total_cost_usd !== undefined) {
+        try {
+          const usageEntry = JSON.stringify({
+            timestamp: new Date().toISOString(),
+            cost_usd: res.total_cost_usd,
+            input_tokens: res.usage?.input_tokens ?? 0,
+            output_tokens: res.usage?.output_tokens ?? 0,
+            cache_creation_tokens: res.usage?.cache_creation_input_tokens ?? 0,
+            cache_read_tokens: res.usage?.cache_read_input_tokens ?? 0,
+            duration_ms: res.duration_ms ?? 0,
+            model: process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001',
+            group_folder: containerInput.groupFolder,
+          }) + '\n';
+          fs.appendFileSync('/workspace/group/usage.jsonl', usageEntry);
+        } catch (err) {
+          log(`Failed to write usage log: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+
       writeOutput({
         status: 'success',
         result: textResult || null,

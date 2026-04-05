@@ -145,6 +145,15 @@ export async function handleXIpc(
       result = await runScript('quote', { tweetUrl: data.tweetUrl, comment: data.comment });
       break;
 
+    case 'x_search':
+      result = await runScript('search', {
+        queries: data.queries || [],
+        hours: data.hours || 24,
+        maxPerQuery: data.maxPerQuery || 10,
+        includeBookmarks: data.includeBookmarks !== false,
+      });
+      break;
+
     default:
       return false;
   }

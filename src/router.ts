@@ -10,10 +10,20 @@ export function escapeXml(s: string): string {
 }
 
 export function formatMessages(messages: NewMessage[]): string {
+  const now = new Date().toLocaleString('en-CA', {
+    timeZone: 'America/Toronto',
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  });
   const lines = messages.map((m) =>
     `<message sender="${escapeXml(m.sender_name)}" time="${m.timestamp}">${escapeXml(m.content)}</message>`,
   );
-  return `<messages>\n${lines.join('\n')}\n</messages>`;
+  return `<context current_time="${now}" timezone="America/Toronto"/>\n<messages>\n${lines.join('\n')}\n</messages>`;
 }
 
 export function stripInternalTags(text: string): string {

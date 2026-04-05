@@ -1,3 +1,4 @@
+import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -151,6 +152,59 @@ export function startIpcWatcher(deps: IpcDeps): void {
   logger.info('IPC watcher started (per-group namespaces)');
 }
 
+interface XScriptResult {
+  success: boolean;
+  message: string;
+  data?: unknown;
+}
+
+async function runXScript(scriptName: string, args: object): Promise<XScriptResult> {
+  const scriptPath = path.join(process.cwd(), '.claude', 'skills', 'x-integration', 'scripts', `${scriptName}.ts`);
+
+  return new Promise((resolve) => {
+    const proc = spawn('npx', ['tsx', scriptPath], {
+      cwd: process.cwd(),
+      env: { ...process.env, NANOCLAW_ROOT: process.cwd() },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+    proc.stdin.write(JSON.stringify(args));
+    proc.stdin.end();
+
+    const timer = setTimeout(() => {
+      proc.kill('SIGTERM');
+      resolve({ success: false, message: 'Script timed out (120s)' });
+    }, 120000);
+
+    proc.on('close', (code: number | null) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        resolve({ success: false, message: `Script exited with code: ${code}` });
+        return;
+      }
+      try {
+        const lines = stdout.trim().split('\n');
+        resolve(JSON.parse(lines[lines.length - 1]));
+      } catch {
+        resolve({ success: false, message: `Failed to parse output: ${stdout.slice(0, 200)}` });
+      }
+    });
+
+    proc.on('error', (err: Error) => {
+      clearTimeout(timer);
+      resolve({ success: false, message: `Failed to spawn: ${err.message}` });
+    });
+  });
+}
+
+function writeXResult(sourceGroup: string, requestId: string, result: XScriptResult): void {
+  const resultsDir = path.join(DATA_DIR, 'ipc', sourceGroup, 'x_results');
+  fs.mkdirSync(resultsDir, { recursive: true });
+  fs.writeFileSync(path.join(resultsDir, `${requestId}.json`), JSON.stringify(result));
+}
+
 export async function processTaskIpc(
   data: {
     type: string;
@@ -169,12 +223,76 @@ export async function processTaskIpc(
     trigger?: string;
     requiresTrigger?: boolean;
     containerConfig?: RegisteredGroup['containerConfig'];
+    // For X integration
+    requestId?: string;
+    content?: string;
+    tweetUrl?: string;
+    comment?: string;
+    queries?: string[];
+    hours?: number;
+    maxPerQuery?: number;
+    includeBookmarks?: boolean;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
   deps: IpcDeps,
 ): Promise<void> {
   const registeredGroups = deps.registeredGroups();
+
+  // Handle X integration IPC types (x_post, x_like, x_reply, x_retweet, x_quote, x_search)
+  if (data.type?.startsWith('x_')) {
+    if (!isMain) {
+      logger.warn({ sourceGroup, type: data.type }, 'X integration blocked: not main group');
+      return;
+    }
+
+    const requestId = data.requestId;
+    if (!requestId) {
+      logger.warn({ type: data.type }, 'X integration blocked: missing requestId');
+      return;
+    }
+
+    logger.info({ type: data.type, requestId }, 'Processing X request');
+
+    let result: XScriptResult;
+
+    switch (data.type) {
+      case 'x_post':
+        result = await runXScript('post', { content: data.content });
+        break;
+      case 'x_like':
+        result = await runXScript('like', { tweetUrl: data.tweetUrl });
+        break;
+      case 'x_reply':
+        result = await runXScript('reply', { tweetUrl: data.tweetUrl, content: data.content });
+        break;
+      case 'x_retweet':
+        result = await runXScript('retweet', { tweetUrl: data.tweetUrl });
+        break;
+      case 'x_quote':
+        result = await runXScript('quote', { tweetUrl: data.tweetUrl, comment: data.comment });
+        break;
+      case 'x_search':
+        result = await runXScript('search', {
+          queries: data.queries || [],
+          hours: data.hours || 24,
+          maxPerQuery: data.maxPerQuery || 10,
+          includeBookmarks: data.includeBookmarks !== false,
+        });
+        break;
+      default:
+        logger.warn({ type: data.type }, 'Unknown X IPC type');
+        return;
+    }
+
+    writeXResult(sourceGroup, requestId, result);
+    if (result.success) {
+      logger.info({ type: data.type, requestId }, 'X request completed');
+    } else {
+      logger.error({ type: data.type, requestId, message: result.message }, 'X request failed');
+    }
+    return;
+  }
 
   switch (data.type) {
     case 'schedule_task':

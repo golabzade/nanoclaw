@@ -5,11 +5,15 @@ import path from 'path';
 
 import {
   GROUPS_DIR,
-  IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
   SCHEDULER_POLL_INTERVAL,
   TIMEZONE,
 } from './config.js';
+
+// Scheduled tasks close their container after 2 minutes of no output.
+// Much shorter than the interactive IDLE_TIMEOUT (30 min) — tasks don't need
+// to stay alive waiting for follow-up messages.
+const TASK_IDLE_TIMEOUT = 2 * 60 * 1000;
 import { ContainerOutput, runContainerAgent, writeTasksSnapshot } from './container-runner.js';
 import {
   getAllTasks,
@@ -81,6 +85,22 @@ async function runTask(
     })),
   );
 
+  // Advance next_run immediately so the scheduler doesn't re-pick this task
+  // while the container is still running (which would cause duplicate runs).
+  let preRunNextRun: string | null = null;
+  if (task.schedule_type === 'cron') {
+    try {
+      const interval = CronExpressionParser.parse(task.schedule_value, { tz: TIMEZONE });
+      preRunNextRun = interval.next().toISOString();
+    } catch { /* ignore parse errors, let the end-of-run logic handle it */ }
+  } else if (task.schedule_type === 'interval') {
+    const ms = parseInt(task.schedule_value, 10);
+    if (!isNaN(ms)) preRunNextRun = new Date(Date.now() + ms).toISOString();
+  }
+  if (preRunNextRun) {
+    updateTaskAfterRun(task.id, preRunNextRun, '');
+  }
+
   let result: string | null = null;
   let error: string | null = null;
 
@@ -98,8 +118,10 @@ async function runTask(
     idleTimer = setTimeout(() => {
       logger.debug({ taskId: task.id }, 'Scheduled task idle timeout, closing container stdin');
       deps.queue.closeStdin(task.chat_jid);
-    }, IDLE_TIMEOUT);
+    }, TASK_IDLE_TIMEOUT);
   };
+
+  resetIdleTimer(); // start idle timer immediately so task can't hang forever
 
   try {
     const output = await runContainerAgent(
@@ -116,13 +138,21 @@ async function runTask(
       async (streamedOutput: ContainerOutput) => {
         if (streamedOutput.result) {
           result = streamedOutput.result;
-          // Forward result to user (sendMessage handles formatting)
-          await deps.sendMessage(task.chat_jid, streamedOutput.result);
-          // Only reset idle timer on actual results, not session-update markers
+          // Note: messages are sent via the send_message MCP tool (IPC path).
+          // The streaming result is logged only — forwarding it here would
+          // cause duplicates when the agent also calls send_message.
+          logger.info(
+            { taskId: task.id, resultLength: streamedOutput.result.length },
+            'Task streamed result (not forwarded — agent uses send_message)',
+          );
           resetIdleTimer();
         }
         if (streamedOutput.status === 'error') {
           error = streamedOutput.error || 'Unknown error';
+          logger.error(
+            { taskId: task.id, error },
+            'Task streamed error',
+          );
         }
       },
     );

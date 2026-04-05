@@ -14,11 +14,32 @@ import { CronExpressionParser } from 'cron-parser';
 const IPC_DIR = '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
 const TASKS_DIR = path.join(IPC_DIR, 'tasks');
+const X_RESULTS_DIR = path.join(IPC_DIR, 'x_results');
 
 // Context from environment variables (set by the agent runner)
 const chatJid = process.env.NANOCLAW_CHAT_JID!;
 const groupFolder = process.env.NANOCLAW_GROUP_FOLDER!;
 const isMain = process.env.NANOCLAW_IS_MAIN === '1';
+
+async function waitForXResult(requestId: string, maxWait = 120000): Promise<{ success: boolean; message: string; data?: unknown }> {
+  const resultFile = path.join(X_RESULTS_DIR, `${requestId}.json`);
+  const pollInterval = 1000;
+  let elapsed = 0;
+  while (elapsed < maxWait) {
+    if (fs.existsSync(resultFile)) {
+      try {
+        const result = JSON.parse(fs.readFileSync(resultFile, 'utf-8'));
+        fs.unlinkSync(resultFile);
+        return result;
+      } catch (err) {
+        return { success: false, message: `Failed to read result: ${err}` };
+      }
+    }
+    await new Promise(resolve => setTimeout(resolve, pollInterval));
+    elapsed += pollInterval;
+  }
+  return { success: false, message: 'X request timed out (120s)' };
+}
 
 function writeIpcFile(dir: string, data: object): string {
   fs.mkdirSync(dir, { recursive: true });
@@ -76,7 +97,7 @@ If unsure which mode to use, you can ask the user. Examples:
 - "Follow up on my request" \u2192 group (needs to know what was requested)
 - "Generate a daily report" \u2192 isolated (just needs instructions in prompt)
 
-MESSAGING BEHAVIOR - The task agent's output is sent to the user or group. It can also use send_message for immediate delivery, or wrap output in <internal> tags to suppress it. Include guidance in the prompt about whether the agent should:
+MESSAGING BEHAVIOR - The task agent's final output is NOT automatically sent to the user. Use send_message to communicate with the user or group. Include guidance in the prompt about whether the agent should:
 \u2022 Always send a message (e.g., reminders, daily briefings)
 \u2022 Only send a message when there's something to report (e.g., "notify me if...")
 \u2022 Never send a message (background maintenance tasks)
@@ -271,6 +292,119 @@ Use available_groups.json to find the JID for a group. The folder name should be
     return {
       content: [{ type: 'text' as const, text: `Group "${args.name}" registered. It will start receiving messages immediately.` }],
     };
+  },
+);
+
+server.tool(
+  'x_search',
+  `Search X (Twitter) for recent posts on topics and from specific accounts. Main group only.
+
+Returns full post text, author, timestamp, likes, reposts, and URL.
+Use this for real-time AI trend analysis, monitoring specific accounts, or researching what people are saying on X.`,
+  {
+    queries: z.array(z.string()).optional().describe('Search terms (e.g. ["Claude Code", "Gemini CLI"])'),
+    hours: z.number().optional().describe('How far back to look in hours (default: 24)'),
+    max_per_query: z.number().optional().describe('Max posts per query (default: 10)'),
+    include_bookmarks: z.boolean().optional().describe('Also scrape bookmarks from that day (default: true)'),
+  },
+  async (args) => {
+    if (!isMain) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only the main group can use X search.' }],
+        isError: true,
+      };
+    }
+
+    const requestId = `xsearch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    writeIpcFile(TASKS_DIR, {
+      type: 'x_search',
+      requestId,
+      queries: args.queries || [],
+      hours: args.hours || 24,
+      maxPerQuery: args.max_per_query || 10,
+      includeBookmarks: args.include_bookmarks !== false,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    const result = await waitForXResult(requestId);
+    if (!result.success) {
+      return {
+        content: [{ type: 'text' as const, text: `X search failed: ${result.message}` }],
+        isError: true,
+      };
+    }
+
+    const data = result.data as { source: string; posts: { author: string; handle: string; text: string; time: string; url: string; likes: string; reposts: string }[] }[];
+    if (!data || data.length === 0) {
+      return { content: [{ type: 'text' as const, text: 'No posts found.' }] };
+    }
+
+    const formatted = data.map(({ source, posts }) =>
+      `## ${source}\n` + posts.map(p =>
+        `@${p.handle}: ${p.text}\n↩ ${p.reposts} ❤ ${p.likes} | ${p.time}\n${p.url}`
+      ).join('\n\n')
+    ).join('\n\n---\n\n');
+
+    return { content: [{ type: 'text' as const, text: formatted }] };
+  },
+);
+
+server.tool(
+  'gemini',
+  `Call Google Gemini 2.0 Flash to process text. Use this when you want a second opinion, parallel processing, large text summarization, translation, classification, or any task where using a different model is useful.
+
+Gemini 2.0 Flash is fast and has a 1M token context window — ideal for processing large documents, books, or long texts that would strain Claude's context.
+
+Examples:
+- Summarize a large document you've already read
+- Classify or extract structured data from text
+- Translate content
+- Process text with a specific prompt in parallel while you do other work`,
+  {
+    prompt: z.string().describe('The instruction for Gemini (what to do with the text)'),
+    text: z.string().optional().describe('The text to process (optional — can include text directly in the prompt)'),
+  },
+  async (args) => {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return {
+        content: [{ type: 'text' as const, text: 'GEMINI_API_KEY not configured. Add it to .env and restart the service.' }],
+        isError: true,
+      };
+    }
+
+    const content = args.text ? `${args.prompt}\n\n${args.text}` : args.prompt;
+
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: content }] }],
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const err = await response.text();
+        return {
+          content: [{ type: 'text' as const, text: `Gemini API error ${response.status}: ${err.slice(0, 300)}` }],
+          isError: true,
+        };
+      }
+
+      const data = await response.json() as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
+      const result = data.candidates?.[0]?.content?.parts?.[0]?.text || 'No response from Gemini.';
+      return { content: [{ type: 'text' as const, text: result }] };
+    } catch (err) {
+      return {
+        content: [{ type: 'text' as const, text: `Gemini call failed: ${err}` }],
+        isError: true,
+      };
+    }
   },
 );
 

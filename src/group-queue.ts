@@ -16,6 +16,7 @@ const BASE_RETRY_MS = 5000;
 
 interface GroupState {
   active: boolean;
+  isTask: boolean; // true when active container is running a scheduled task
   pendingMessages: boolean;
   pendingTasks: QueuedTask[];
   process: ChildProcess | null;
@@ -37,6 +38,7 @@ export class GroupQueue {
     if (!state) {
       state = {
         active: false,
+        isTask: false,
         pendingMessages: false,
         pendingTasks: [],
         process: null,
@@ -125,7 +127,7 @@ export class GroupQueue {
    */
   sendMessage(groupJid: string, text: string): boolean {
     const state = this.getGroup(groupJid);
-    if (!state.active || !state.groupFolder) return false;
+    if (!state.active || !state.groupFolder || state.isTask) return false;
 
     const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
     try {
@@ -196,6 +198,7 @@ export class GroupQueue {
   private async runTask(groupJid: string, task: QueuedTask): Promise<void> {
     const state = this.getGroup(groupJid);
     state.active = true;
+    state.isTask = true;
     this.activeCount++;
 
     logger.debug(
@@ -209,6 +212,7 @@ export class GroupQueue {
       logger.error({ groupJid, taskId: task.id, err }, 'Error running task');
     } finally {
       state.active = false;
+      state.isTask = false;
       state.process = null;
       state.containerName = null;
       state.groupFolder = null;

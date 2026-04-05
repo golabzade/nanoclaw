@@ -8,9 +8,12 @@ import {
   IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
+  TELEGRAM_BOT_TOKEN,
+  TELEGRAM_ONLY,
   TRIGGER_PATTERN,
 } from './config.js';
 import { WhatsAppChannel } from './channels/whatsapp.js';
+import { TelegramChannel } from './channels/telegram.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -34,9 +37,9 @@ import {
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { startIpcWatcher } from './ipc.js';
-import { formatMessages, formatOutbound } from './router.js';
+import { findChannel, formatMessages, formatOutbound } from './router.js';
 import { startSchedulerLoop } from './task-scheduler.js';
-import { NewMessage, RegisteredGroup } from './types.js';
+import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 
 // Re-export for backwards compatibility during refactor
@@ -49,6 +52,7 @@ let lastAgentTimestamp: Record<string, string> = {};
 let messageLoopRunning = false;
 
 let whatsapp: WhatsAppChannel;
+const channels: Channel[] = [];
 const queue = new GroupQueue();
 
 function loadState(): void {
@@ -99,7 +103,7 @@ export function getAvailableGroups(): import('./container-runner.js').AvailableG
   const registeredJids = new Set(Object.keys(registeredGroups));
 
   return chats
-    .filter((c) => c.jid !== '__group_sync__' && c.jid.endsWith('@g.us'))
+    .filter((c) => c.jid !== '__group_sync__' && (c.jid.endsWith('@g.us') || c.jid.startsWith('tg:')))
     .map((c) => ({
       jid: c.jid,
       name: c.name,
@@ -161,7 +165,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }, IDLE_TIMEOUT);
   };
 
-  await whatsapp.setTyping(chatJid, true);
+  const channel = findChannel(channels, chatJid);
+  if (!channel) return true;
+
+  await channel.setTyping?.(chatJid, true);
   let hadError = false;
   let outputSentToUser = false;
 
@@ -173,8 +180,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
       if (text) {
-        await whatsapp.sendMessage(chatJid, text);
+        await channel.sendMessage(chatJid, text);
         outputSentToUser = true;
+        // Advance cursor to cover any messages piped into this container since it started.
+        // This prevents a retry from re-processing messages already responded to.
+        const latestMessages = getMessagesSince(chatJid, lastAgentTimestamp[chatJid] || '', ASSISTANT_NAME);
+        if (latestMessages.length > 0) {
+          lastAgentTimestamp[chatJid] = latestMessages[latestMessages.length - 1].timestamp;
+          saveState();
+        }
       }
       // Only reset idle timer on actual results, not session-update markers (result: null)
       resetIdleTimer();
@@ -185,7 +199,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
   });
 
-  await whatsapp.setTyping(chatJid, false);
+  await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
 
   if (output === 'error' || hadError) {
@@ -349,11 +363,17 @@ async function startMessageLoop(): Promise<void> {
               { chatJid, count: messagesToSend.length },
               'Piped messages to active container',
             );
-            lastAgentTimestamp[chatJid] =
-              messagesToSend[messagesToSend.length - 1].timestamp;
-            saveState();
+            // Do NOT advance lastAgentTimestamp here. The cursor only moves
+            // when the container actually responds (see processGroupMessages onOutput).
+            // If the container dies before responding, lastAgentTimestamp stays put
+            // and the messages will be found and retried by the next processGroupMessages run.
+            //
+            // Mark pending so drainGroup retries with a fresh container if this one
+            // dies without sending a response.
+            queue.enqueueMessageCheck(chatJid); // sets pendingMessages=true since container is active
             // Show typing indicator while the container processes the piped message
-            whatsapp.setTyping(chatJid, true);
+            const ch = findChannel(channels, chatJid);
+            ch?.setTyping?.(chatJid, true);
           } else {
             // No active container — enqueue for a new one
             queue.enqueueMessageCheck(chatJid);
@@ -426,24 +446,28 @@ function ensureContainerSystemRunning(): void {
 
   // Kill and clean up orphaned NanoClaw containers from previous runs
   try {
-    const output = execSync('container ls --format json', {
+    const listJson = execSync('container ls -a --format json', {
       stdio: ['pipe', 'pipe', 'pipe'],
       encoding: 'utf-8',
     });
-    const containers: { status: string; configuration: { id: string } }[] = JSON.parse(output || '[]');
-    const orphans = containers
-      .filter((c) => c.status === 'running' && c.configuration.id.startsWith('nanoclaw-'))
+    const containers = JSON.parse(listJson) as Array<{ configuration: { id: string }; status: string }>;
+    const nanoclawContainers = containers.filter(
+      (c) => c.configuration.id.startsWith('nanoclaw-'),
+    );
+    const running = nanoclawContainers
+      .filter((c) => c.status === 'running')
       .map((c) => c.configuration.id);
-    for (const name of orphans) {
-      try {
-        execSync(`container stop ${name}`, { stdio: 'pipe' });
-      } catch { /* already stopped */ }
+    if (running.length > 0) {
+      execSync(`container stop ${running.join(' ')}`, { stdio: 'pipe' });
+      logger.info({ count: running.length }, 'Stopped orphaned containers');
     }
-    if (orphans.length > 0) {
-      logger.info({ count: orphans.length, names: orphans }, 'Stopped orphaned containers');
+    const allNames = nanoclawContainers.map((c) => c.configuration.id);
+    if (allNames.length > 0) {
+      execSync(`container rm ${allNames.join(' ')}`, { stdio: 'pipe' });
+      logger.info({ count: allNames.length }, 'Cleaned up stopped containers');
     }
-  } catch (err) {
-    logger.warn({ err }, 'Failed to clean up orphaned containers');
+  } catch {
+    // No containers or cleanup not supported
   }
 }
 
@@ -457,21 +481,32 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
     await queue.shutdown(10000);
-    await whatsapp.disconnect();
+    for (const ch of channels) await ch.disconnect();
     process.exit(0);
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
 
-  // Create WhatsApp channel
-  whatsapp = new WhatsAppChannel({
-    onMessage: (chatJid, msg) => storeMessage(msg),
-    onChatMetadata: (chatJid, timestamp) => storeChatMetadata(chatJid, timestamp),
+  // Channel callbacks (shared by all channels)
+  const channelOpts = {
+    onMessage: (chatJid: string, msg: NewMessage) => storeMessage(msg),
+    onChatMetadata: (chatJid: string, timestamp: string, name?: string) =>
+      storeChatMetadata(chatJid, timestamp, name),
     registeredGroups: () => registeredGroups,
-  });
+  };
 
-  // Connect — resolves when first connected
-  await whatsapp.connect();
+  // Create and connect channels
+  if (!TELEGRAM_ONLY) {
+    whatsapp = new WhatsAppChannel(channelOpts);
+    channels.push(whatsapp);
+    await whatsapp.connect();
+  }
+
+  if (TELEGRAM_BOT_TOKEN) {
+    const telegram = new TelegramChannel(TELEGRAM_BOT_TOKEN, channelOpts);
+    channels.push(telegram);
+    await telegram.connect();
+  }
 
   // Start subsystems (independently of connection handler)
   startSchedulerLoop({
@@ -480,15 +515,21 @@ async function main(): Promise<void> {
     queue,
     onProcess: (groupJid, proc, containerName, groupFolder) => queue.registerProcess(groupJid, proc, containerName, groupFolder),
     sendMessage: async (jid, rawText) => {
+      const channel = findChannel(channels, jid);
+      if (!channel) return;
       const text = formatOutbound(rawText);
-      if (text) await whatsapp.sendMessage(jid, text);
+      if (text) await channel.sendMessage(jid, text);
     },
   });
   startIpcWatcher({
-    sendMessage: (jid, text) => whatsapp.sendMessage(jid, text),
+    sendMessage: (jid, text) => {
+      const channel = findChannel(channels, jid);
+      if (!channel) throw new Error(`No channel for JID: ${jid}`);
+      return channel.sendMessage(jid, text);
+    },
     registeredGroups: () => registeredGroups,
     registerGroup,
-    syncGroupMetadata: (force) => whatsapp.syncGroupMetadata(force),
+    syncGroupMetadata: (force) => whatsapp?.syncGroupMetadata(force) ?? Promise.resolve(),
     getAvailableGroups,
     writeGroupsSnapshot: (gf, im, ag, rj) => writeGroupsSnapshot(gf, im, ag, rj),
   });

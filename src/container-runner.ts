@@ -121,6 +121,8 @@ function buildVolumeMounts(
         // Enable Claude's memory feature (persists user preferences between sessions)
         // https://code.claude.com/docs/en/memory#manage-auto-memory
         CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
+        // Use Haiku by default — faster and cheaper for daily use
+        ANTHROPIC_MODEL: 'claude-haiku-4-5-20251001',
       },
     }, null, 2) + '\n');
   }
@@ -186,7 +188,7 @@ function buildVolumeMounts(
  * Secrets are never written to disk or mounted as files.
  */
 function readSecrets(): Record<string, string> {
-  return readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']);
+  return readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'GEMINI_API_KEY']);
 }
 
 function buildContainerArgs(mounts: VolumeMount[], containerName: string): string[] {

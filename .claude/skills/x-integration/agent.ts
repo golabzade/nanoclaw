@@ -239,5 +239,59 @@ Retweet with your own comment added.`,
         };
       }
     )
+    tool(
+      'x_search',
+      `Search X (Twitter) for recent posts on topics and from specific accounts. Main group only.
+
+Returns full post text, author, time, likes, and reposts from the last N hours.
+Use this to research what's being discussed on X before posting or for trend analysis.`,
+      {
+        queries: z.array(z.string()).optional().describe('Search terms to look up (e.g. ["AI agents", "Gemini CLI"])'),
+        accounts: z.array(z.string()).optional().describe('Account usernames to fetch timelines from, without @ (e.g. ["karpathy", "omarsar0"])'),
+        hours: z.number().optional().describe('How far back to look in hours (default: 24)'),
+        max_per_query: z.number().optional().describe('Max posts per query or account (default: 8)')
+      },
+      async (args: { queries?: string[]; accounts?: string[]; hours?: number; max_per_query?: number }) => {
+        if (!isMain) {
+          return {
+            content: [{ type: 'text', text: 'Only the main group can use X search.' }],
+            isError: true
+          };
+        }
+
+        const requestId = `xsearch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        writeIpcFile(TASKS_DIR, {
+          type: 'x_search',
+          requestId,
+          queries: args.queries || [],
+          accounts: args.accounts || [],
+          hours: args.hours || 24,
+          maxPerQuery: args.max_per_query || 8,
+          groupFolder,
+          timestamp: new Date().toISOString()
+        });
+
+        const result = await waitForResult(requestId, 120000);
+        if (!result.success) {
+          return {
+            content: [{ type: 'text', text: result.message }],
+            isError: true
+          };
+        }
+
+        const data = (result as any).data as { source: string; posts: object[] }[];
+        if (!data || data.length === 0) {
+          return { content: [{ type: 'text', text: 'No posts found.' }] };
+        }
+
+        const formatted = data.map(({ source, posts }) =>
+          `## ${source}\n` + (posts as any[]).map((p: any) =>
+            `@${p.handle}: ${p.text}\n↩ ${p.reposts} ❤ ${p.likes} | ${p.time}\n${p.url}`
+          ).join('\n\n')
+        ).join('\n\n---\n\n');
+
+        return { content: [{ type: 'text', text: formatted }] };
+      }
+    )
   ];
 }
