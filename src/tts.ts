@@ -5,7 +5,10 @@ import { logger } from './logger.js';
 import { readEnvFile } from './env.js';
 
 const envConfig = readEnvFile(['GOOGLE_APPLICATION_CREDENTIALS']);
-const GOOGLE_CREDENTIALS_PATH = process.env.GOOGLE_APPLICATION_CREDENTIALS || envConfig.GOOGLE_APPLICATION_CREDENTIALS || '';
+const GOOGLE_CREDENTIALS_PATH =
+  process.env.GOOGLE_APPLICATION_CREDENTIALS ||
+  envConfig.GOOGLE_APPLICATION_CREDENTIALS ||
+  '';
 const TTS_VOICE = 'en-US-Chirp3-HD-Algenib';
 const TTS_LANGUAGE = 'en-US';
 const TTS_CHUNK_SIZE = 4500; // Google limit is 5000 bytes per request
@@ -14,7 +17,9 @@ let ttsClient: textToSpeech.TextToSpeechClient | null = null;
 
 function getClient(): textToSpeech.TextToSpeechClient | null {
   if (!GOOGLE_CREDENTIALS_PATH || !fs.existsSync(GOOGLE_CREDENTIALS_PATH)) {
-    logger.warn('GOOGLE_APPLICATION_CREDENTIALS not set or file not found, TTS disabled');
+    logger.warn(
+      'GOOGLE_APPLICATION_CREDENTIALS not set or file not found, TTS disabled',
+    );
     return null;
   }
   if (!ttsClient) {
@@ -55,7 +60,10 @@ export async function textToAudio(text: string): Promise<string | null> {
 
     const combined = Buffer.concat(audioBuffers);
     fs.writeFileSync(outputFile, combined);
-    logger.info({ chars: text.length, file: outputFile }, 'TTS audio generated');
+    logger.info(
+      { chars: text.length, file: outputFile },
+      'TTS audio generated',
+    );
     return outputFile;
   } catch (err) {
     logger.error({ err }, 'Google Cloud TTS failed');
@@ -66,5 +74,7 @@ export async function textToAudio(text: string): Promise<string | null> {
 export function cleanupTtsFile(filePath: string): void {
   try {
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }

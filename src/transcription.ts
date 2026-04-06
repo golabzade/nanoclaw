@@ -18,7 +18,9 @@ function getGroqClient(): Groq | null {
   return groqClient;
 }
 
-export async function transcribeAudio(audioBuffer: Buffer): Promise<string | null> {
+export async function transcribeAudio(
+  audioBuffer: Buffer,
+): Promise<string | null> {
   const client = getGroqClient();
   if (!client) return null;
 
