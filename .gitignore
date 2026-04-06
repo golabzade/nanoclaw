@@ -10,11 +10,7 @@ data/
 logs/
 
 # Groups - personal config stays local only
-groups/*
-!groups/main/
-!groups/global/
-groups/main/*
-groups/global/*
+groups/
 
 # Secrets
 *.keys.json
