@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  nanoclaw:
+    build:
+      context: .
+      dockerfile: Dockerfile.main
+    container_name: nanoclaw-main
+    restart: always
+    volumes:
+      # Mount the Docker socket so the main process can start/stop containers
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Persistence: Mount your personal data and memory
+      - ./groups:/app/groups
+      - ./data:/app/data
+      - ./store:/app/store
+      - ./.env:/app/.env
+    # Host networking allows the assistant to easily connect to Telegram/WhatsApp servers
+    network_mode: host
+    environment:
+      - NODE_ENV=production
+      - TZ=America/Toronto
+
+  # The agent image used by the main process (built once on setup)
+  # This service is only here to help you build the agent image easily
+  nanoclaw-agent-builder:
+    build:
+      context: .
+      dockerfile: container/Dockerfile
+    image: nanoclaw-agent:latest
+    profiles:
+      - setup-only
