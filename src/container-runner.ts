@@ -14,6 +14,7 @@ import {
   GROUPS_DIR,
   HOST_PROJECT_ROOT,
   IDLE_TIMEOUT,
+  ONECLI_API_KEY,
   ONECLI_URL,
   TIMEZONE,
 } from './config.js';
@@ -30,7 +31,7 @@ import { OneCLI } from '@onecli-sh/sdk';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
-const onecli = new OneCLI({ url: ONECLI_URL });
+const onecli = new OneCLI({ url: ONECLI_URL, apiKey: ONECLI_API_KEY });
 
 /**
  * Translate a container-internal path to the equivalent host path for Docker mounts.
