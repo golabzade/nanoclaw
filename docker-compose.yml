@@ -6,6 +6,7 @@ services:
       context: .
       dockerfile: Dockerfile.main
     container_name: nanoclaw-main
+    hostname: nanoclaw-main
     restart: always
     volumes:
       # Mount the Docker socket so the main process can start/stop containers
@@ -15,18 +16,26 @@ services:
       - ./data:/app/data
       - ./store:/app/store
       - ./.env:/app/.env
+      - ./google-credentials.json:/app/google-credentials.json
     # Host networking allows the assistant to easily connect to Telegram/WhatsApp servers
     network_mode: host
     environment:
       - NODE_ENV=production
       - TZ=America/Toronto
+      - ONECLI_URL=
+      # Host path to the nanoclaw project root — needed so DinD agent container
+      # mounts use real host paths instead of container-internal /app/ paths.
+      - NANOCLAW_HOST_PROJECT_ROOT=/home/maryam/nanoclaw
+    stop_grace_period: 30s
+    group_add:
+      - "988" # GID of 'docker' group on the host
 
   # The agent image used by the main process (built once on setup)
   # This service is only here to help you build the agent image easily
   nanoclaw-agent-builder:
     build:
-      context: .
-      dockerfile: container/Dockerfile
+      context: container
+      dockerfile: Dockerfile
     image: nanoclaw-agent:latest
     profiles:
       - setup-only

@@ -2,7 +2,12 @@ import fs from 'fs';
 import path from 'path';
 import { Bot, InputFile } from 'grammy';
 
-import { ASSISTANT_NAME, GROUPS_DIR, TRIGGER_PATTERN } from '../config.js';
+import {
+  ASSISTANT_NAME,
+  GROUPS_DIR,
+  TRIGGER_PATTERN,
+  TELEGRAM_BOT_TOKEN,
+} from '../config.js';
 import { logger } from '../logger.js';
 import { textToAudio, cleanupTtsFile } from '../tts.js';
 import { transcribeAudio } from '../transcription.js';
@@ -12,6 +17,7 @@ import {
   OnChatMetadata,
   RegisteredGroup,
 } from '../types.js';
+import { registerChannel, ChannelOpts } from './registry.js';
 
 export interface TelegramChannelOpts {
   onMessage: OnInboundMessage;
@@ -403,14 +409,19 @@ export class TelegramChannel implements Channel {
 
       // Regular text message
       const MAX_LENGTH = 4096;
+      const sendWithMarkdown = async (chatId: string | number, chunk: string) => {
+        try {
+          await this.bot!.api.sendMessage(chatId, chunk, { parse_mode: 'Markdown' });
+        } catch {
+          // Fallback to plain text if Markdown parsing fails
+          await this.bot!.api.sendMessage(chatId, chunk);
+        }
+      };
       if (text.length <= MAX_LENGTH) {
-        await this.bot.api.sendMessage(numericId, text);
+        await sendWithMarkdown(numericId, text);
       } else {
         for (let i = 0; i < text.length; i += MAX_LENGTH) {
-          await this.bot.api.sendMessage(
-            numericId,
-            text.slice(i, i + MAX_LENGTH),
-          );
+          await sendWithMarkdown(numericId, text.slice(i, i + MAX_LENGTH));
         }
       }
       logger.info({ jid, length: text.length }, 'Telegram message sent');
@@ -445,3 +456,8 @@ export class TelegramChannel implements Channel {
     }
   }
 }
+
+registerChannel('telegram', (opts: ChannelOpts) => {
+  if (!TELEGRAM_BOT_TOKEN) return null;
+  return new TelegramChannel(TELEGRAM_BOT_TOKEN, opts);
+});

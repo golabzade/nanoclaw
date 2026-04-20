@@ -33,6 +33,7 @@ interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   script?: string;
+  secrets?: Record<string, string>;
 }
 
 interface ContainerOutput {
@@ -526,38 +527,46 @@ async function runQuery(
 
     if (message.type === 'result') {
       resultCount++;
-<<<<<<< HEAD
-      const res = message as { result?: string; subtype?: string; total_cost_usd?: number; usage?: { input_tokens?: number; output_tokens?: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number }; duration_ms?: number };
+      const res = message as {
+        result?: string;
+        subtype?: string;
+        total_cost_usd?: number;
+        usage?: {
+          input_tokens?: number;
+          output_tokens?: number;
+          cache_creation_input_tokens?: number;
+          cache_read_input_tokens?: number;
+        };
+        duration_ms?: number;
+      };
       const textResult = res.result || null;
-      log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
+      log(
+        `Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`,
+      );
 
       // Append usage to group usage log for daily summary
       if (res.subtype === 'success' && res.total_cost_usd !== undefined) {
         try {
-          const usageEntry = JSON.stringify({
-            timestamp: new Date().toISOString(),
-            cost_usd: res.total_cost_usd,
-            input_tokens: res.usage?.input_tokens ?? 0,
-            output_tokens: res.usage?.output_tokens ?? 0,
-            cache_creation_tokens: res.usage?.cache_creation_input_tokens ?? 0,
-            cache_read_tokens: res.usage?.cache_read_input_tokens ?? 0,
-            duration_ms: res.duration_ms ?? 0,
-            model: process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001',
-            group_folder: containerInput.groupFolder,
-          }) + '\n';
+          const usageEntry =
+            JSON.stringify({
+              timestamp: new Date().toISOString(),
+              cost_usd: res.total_cost_usd,
+              input_tokens: res.usage?.input_tokens ?? 0,
+              output_tokens: res.usage?.output_tokens ?? 0,
+              cache_creation_tokens: res.usage?.cache_creation_input_tokens ?? 0,
+              cache_read_tokens: res.usage?.cache_read_input_tokens ?? 0,
+              duration_ms: res.duration_ms ?? 0,
+              model: process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001',
+              group_folder: containerInput.groupFolder,
+            }) + '\n';
           fs.appendFileSync('/workspace/group/usage.jsonl', usageEntry);
         } catch (err) {
-          log(`Failed to write usage log: ${err instanceof Error ? err.message : String(err)}`);
+          log(
+            `Failed to write usage log: ${err instanceof Error ? err.message : String(err)}`,
+          );
         }
       }
 
-=======
-      const textResult =
-        'result' in message ? (message as { result?: string }).result : null;
-      log(
-        `Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`,
-      );
->>>>>>> upstream/main
       writeOutput({
         status: 'success',
         result: textResult || null,
@@ -650,12 +659,19 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Credentials are injected by the host's credential proxy via ANTHROPIC_BASE_URL.
-  // No real secrets exist in the container environment.
   const sdkEnv: Record<string, string | undefined> = {
     ...process.env,
     CLAUDE_CODE_AUTO_COMPACT_WINDOW: '165000',
   };
+
+  // Apply secrets passed via stdin from the host (never put in env directly
+  // so they don't leak to child processes spawned by the agent).
+  if (containerInput.secrets) {
+    for (const [k, v] of Object.entries(containerInput.secrets)) {
+      if (v) sdkEnv[k] = v;
+    }
+    delete containerInput.secrets;
+  }
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');

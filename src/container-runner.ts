@@ -12,6 +12,7 @@ import {
   CONTAINER_TIMEOUT,
   DATA_DIR,
   GROUPS_DIR,
+  HOST_PROJECT_ROOT,
   IDLE_TIMEOUT,
   ONECLI_URL,
   TIMEZONE,
@@ -30,6 +31,22 @@ import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
 const onecli = new OneCLI({ url: ONECLI_URL });
+
+/**
+ * Translate a container-internal path to the equivalent host path for Docker mounts.
+ * When running inside a Docker container, process.cwd() is /app but the host Docker
+ * daemon needs real host filesystem paths. NANOCLAW_HOST_PROJECT_ROOT bridges this gap.
+ */
+function toHostPath(containerPath: string): string {
+  const projectRoot = process.cwd();
+  if (HOST_PROJECT_ROOT === projectRoot) return containerPath;
+  // Replace the container's project root prefix with the host's project root
+  if (containerPath === projectRoot) return HOST_PROJECT_ROOT;
+  if (containerPath.startsWith(projectRoot + path.sep)) {
+    return HOST_PROJECT_ROOT + containerPath.slice(projectRoot.length);
+  }
+  return containerPath;
+}
 
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
@@ -68,36 +85,45 @@ function buildVolumeMounts(
   const projectRoot = process.cwd();
   const groupDir = resolveGroupFolderPath(group.folder);
 
+  // Mount CA certificate if NODE_EXTRA_CA_CERTS or SSL_CERT_FILE is set
+  // This is needed for the sandbox MITM proxy
+  const caCertSrc = process.env.NODE_EXTRA_CA_CERTS || process.env.SSL_CERT_FILE;
+  if (caCertSrc && fs.existsSync(caCertSrc)) {
+    const certDir = path.join(DATA_DIR, 'ca-cert');
+    fs.mkdirSync(certDir, { recursive: true });
+    const certFileName = path.basename(caCertSrc);
+    fs.copyFileSync(caCertSrc, path.join(certDir, certFileName));
+    mounts.push({
+      hostPath: toHostPath(certDir),
+      containerPath: '/workspace/ca-cert',
+      readonly: true,
+    });
+  }
+
   if (isMain) {
     // Main gets the project root read-only. Writable paths the agent needs
     // (store, group folder, IPC, .claude/) are mounted separately below.
     mounts.push({
-      hostPath: projectRoot,
+      hostPath: toHostPath(projectRoot),
       containerPath: '/workspace/project',
-      readonly: true,
+      readonly: false,
     });
 
-    // Shadow .env so the agent cannot read secrets from the mounted project root.
-    const envFile = path.join(projectRoot, '.env');
-    if (fs.existsSync(envFile)) {
-      mounts.push({
-        hostPath: '/dev/null',
-        containerPath: '/workspace/project/.env',
-        readonly: true,
-      });
-    }
+    // Note: .env shadow mount removed — nested bind-mounts inside an overlayfs
+    // directory fail on DinD setups (read-only filesystem on overlay upper layer).
+    // Secrets are passed to the agent via stdin (readSecrets()), not from the file.
 
     // Main gets writable access to the store (SQLite DB)
     const storeDir = path.join(projectRoot, 'store');
     mounts.push({
-      hostPath: storeDir,
+      hostPath: toHostPath(storeDir),
       containerPath: '/workspace/project/store',
       readonly: false,
     });
 
     // Main also gets its group folder as the working directory
     mounts.push({
-      hostPath: groupDir,
+      hostPath: toHostPath(groupDir),
       containerPath: '/workspace/group',
       readonly: false,
     });
@@ -106,7 +132,7 @@ function buildVolumeMounts(
     const globalDir = path.join(GROUPS_DIR, 'global');
     if (fs.existsSync(globalDir)) {
       mounts.push({
-        hostPath: globalDir,
+        hostPath: toHostPath(globalDir),
         containerPath: '/workspace/global',
         readonly: false,
       });
@@ -114,7 +140,7 @@ function buildVolumeMounts(
   } else {
     // Other groups only get their own folder
     mounts.push({
-      hostPath: groupDir,
+      hostPath: toHostPath(groupDir),
       containerPath: '/workspace/group',
       readonly: false,
     });
@@ -123,7 +149,7 @@ function buildVolumeMounts(
     const globalDir = path.join(GROUPS_DIR, 'global');
     if (fs.existsSync(globalDir)) {
       mounts.push({
-        hostPath: globalDir,
+        hostPath: toHostPath(globalDir),
         containerPath: '/workspace/global',
         readonly: true,
       });
@@ -173,7 +199,7 @@ function buildVolumeMounts(
     }
   }
   mounts.push({
-    hostPath: groupSessionsDir,
+    hostPath: toHostPath(groupSessionsDir),
     containerPath: '/home/node/.claude',
     readonly: false,
   });
@@ -184,7 +210,7 @@ function buildVolumeMounts(
   fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
   mounts.push({
-    hostPath: groupIpcDir,
+    hostPath: toHostPath(groupIpcDir),
     containerPath: '/workspace/ipc',
     readonly: false,
   });
@@ -215,7 +241,7 @@ function buildVolumeMounts(
     }
   }
   mounts.push({
-    hostPath: groupAgentRunnerDir,
+    hostPath: toHostPath(groupAgentRunnerDir),
     containerPath: '/app/src',
     readonly: false,
   });
@@ -254,6 +280,26 @@ async function buildContainerArgs(
 
   // Pass host timezone
   args.push('-e', `TZ=${TIMEZONE}`);
+
+  // Forward proxy environment variables
+  const proxies = [
+    'HTTP_PROXY',
+    'HTTPS_PROXY',
+    'NO_PROXY',
+    'http_proxy',
+    'https_proxy',
+    'no_proxy',
+  ];
+  for (const p of proxies) {
+    if (process.env[p]) args.push('-e', `${p}=${process.env[p]}`);
+  }
+
+  // Set NODE_EXTRA_CA_CERTS if we mounted a CA cert
+  const caCertSrc = process.env.NODE_EXTRA_CA_CERTS || process.env.SSL_CERT_FILE;
+  if (caCertSrc) {
+    const certFileName = path.basename(caCertSrc);
+    args.push('-e', `NODE_EXTRA_CA_CERTS=/workspace/ca-cert/${certFileName}`);
+  }
 
   // OneCLI gateway handles credential injection
   const onecliApplied = await onecli.applyContainerConfig(args, {

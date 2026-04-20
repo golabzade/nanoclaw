@@ -33,6 +33,12 @@ export const SCHEDULER_POLL_INTERVAL = 60000;
 const PROJECT_ROOT = process.cwd();
 const HOME_DIR = process.env.HOME || os.homedir();
 
+// When running inside Docker, process.cwd() is the container path (/app).
+// The host Docker daemon needs real host paths for volume mounts.
+// Set NANOCLAW_HOST_PROJECT_ROOT to the host's project directory (e.g. /home/user/nanoclaw).
+export const HOST_PROJECT_ROOT =
+  process.env.NANOCLAW_HOST_PROJECT_ROOT || PROJECT_ROOT;
+
 // Mount security: allowlist stored OUTSIDE project root, never mounted into containers
 export const MOUNT_ALLOWLIST_PATH = path.join(
   HOME_DIR,

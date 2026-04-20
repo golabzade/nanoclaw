@@ -21,7 +21,7 @@ import {
   getChannelFactory,
   getRegisteredChannelNames,
 } from './channels/registry.js';
-import { WhatsAppChannel } from './channels/whatsapp.js';
+// import { WhatsAppChannel } from './channels/whatsapp.js';
 import { TelegramChannel } from './channels/telegram.js';
 import {
   ContainerOutput,
@@ -79,7 +79,7 @@ let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
 let messageLoopRunning = false;
 
-let whatsapp: WhatsAppChannel | undefined;
+// let whatsapp: WhatsAppChannel | undefined;
 const channels: Channel[] = [];
 const queue = new GroupQueue();
 
@@ -711,9 +711,11 @@ async function main(): Promise<void> {
     }
     channels.push(channel);
     await channel.connect();
+    /*
     if (channel instanceof WhatsAppChannel) {
       whatsapp = channel;
     }
+    */
   }
 
   if (channels.length === 0) {
