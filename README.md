@@ -24,6 +24,8 @@
 - **Photo support** — Photos sent via Telegram are saved to the agent's workspace and passed to Claude
 - **👀 Message reaction** — Bot reacts to incoming messages so you know it received them
 - **BiDi fix** — Correct right-to-left rendering for Persian / Arabic text
+- **Voice Transcription (Groq)** — Voice notes sent via Telegram are transcribed lightning-fast using Groq API
+- **Text-to-Speech (Google Cloud)** — The bot can respond with actual voice audio messages using Google Cloud TTS
 - **`pdf-reader` skill** — Read PDFs sent via Telegram or from a URL
 - **`x-fetch` skill** — Fetch tweet content from X/Twitter links without API keys
 
