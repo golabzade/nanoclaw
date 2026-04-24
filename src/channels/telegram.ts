@@ -45,7 +45,18 @@ export interface TelegramChannelOpts {
 }
 
 // Valid Telegram reaction emojis — rotated randomly to feel more alive
-const REACTIONS = ['👀', '🔥', '⚡', '💯', '👌', '🫡', '🤓', '😎', '🎉', '🏆'] as const;
+const REACTIONS = [
+  '👀',
+  '🔥',
+  '⚡',
+  '💯',
+  '👌',
+  '🫡',
+  '🤓',
+  '😎',
+  '🎉',
+  '🏆',
+] as const;
 type ReactionEmoji = (typeof REACTIONS)[number];
 function randomReaction(): ReactionEmoji {
   return REACTIONS[Math.floor(Math.random() * REACTIONS.length)];
@@ -148,7 +159,7 @@ export class TelegramChannel implements Channel {
         .setMessageReaction(ctx.chat.id, ctx.message.message_id, [
           { type: 'emoji', emoji: randomReaction() },
         ])
-        .catch(() => { });
+        .catch(() => {});
 
       logger.info(
         { chatJid, chatName, sender: senderName },
@@ -231,7 +242,7 @@ export class TelegramChannel implements Channel {
           .setMessageReaction(ctx.chat.id, ctx.message.message_id, [
             { type: 'emoji', emoji: randomReaction() },
           ])
-          .catch(() => { });
+          .catch(() => {});
 
         logger.info({ chatJid, filename }, 'Photo saved to workspace');
       } catch (err) {
