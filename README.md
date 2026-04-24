@@ -17,6 +17,18 @@
 
 ---
 
+## ✨ This Fork Adds
+
+> 📄 **Full details → [FORK.md](FORK.md)**
+
+- **Photo support** — Photos sent via Telegram are saved to the agent's workspace and passed to Claude
+- **👀 Message reaction** — Bot reacts to incoming messages so you know it received them
+- **BiDi fix** — Correct right-to-left rendering for Persian / Arabic text
+- **`pdf-reader` skill** — Read PDFs sent via Telegram or from a URL
+- **`x-fetch` skill** — Fetch tweet content from X/Twitter links without API keys
+
+---
+
 ## Why I Built NanoClaw
 
 [OpenClaw](https://github.com/openclaw/openclaw) is an impressive project, but I wouldn't have been able to sleep if I had given complex software I didn't understand full access to my life. OpenClaw has nearly half a million lines of code, 53 config files, and 70+ dependencies. Its security is at the application level (allowlists, pairing codes) rather than true OS-level isolation. Everything runs in one Node process with shared memory.
