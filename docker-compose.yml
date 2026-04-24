@@ -25,7 +25,7 @@ services:
       - ONECLI_URL=
       # Host path to the nanoclaw project root — needed so DinD agent container
       # mounts use real host paths instead of container-internal /app/ paths.
-      - NANOCLAW_HOST_PROJECT_ROOT=/home/maryam/nanoclaw
+      - NANOCLAW_HOST_PROJECT_ROOT=/home/user/nanoclaw  # ← set to your actual host path
     stop_grace_period: 30s
     group_add:
       - "988" # GID of 'docker' group on the host

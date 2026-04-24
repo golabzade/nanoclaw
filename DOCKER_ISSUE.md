@@ -45,7 +45,7 @@ Changed `Dockerfile.main` from `ENTRYPOINT ["npm", "start"]` to `ENTRYPOINT ["no
 
 ## Current Status
 - **Orchestrator**: Stable and running as `nanoclaw-main`.
-- **Connectivity**: Telegram bot (@Mokado_bot) is online.
+- **Connectivity**: Telegram bot is online.
 - **Agents**: Successfully spawning sub-containers with proper credential/proxy passthrough.
 
 ---
@@ -151,7 +151,7 @@ docker exec nanoclaw-main printenv NANOCLAW_HOST_PROJECT_ROOT
 
 # Check the host /app/ directory (should match nanoclaw project structure)
 ls /app/data/sessions/
-ls /home/maryam/nanoclaw/data/sessions/
+ls /home/user/nanoclaw/data/sessions/
 # Both should show the same contents
 ```
 
@@ -161,7 +161,7 @@ ls /home/maryam/nanoclaw/data/sessions/
 
 ```bash
 # Check CLAUDE_CODE_OAUTH_TOKEN is set (don't print the full value)
-grep -c CLAUDE_CODE_OAUTH_TOKEN /home/maryam/nanoclaw/.env
+grep -c CLAUDE_CODE_OAUTH_TOKEN /home/user/nanoclaw/.env
 # Should print 1
 ```
 
@@ -208,7 +208,7 @@ function toHostPath(containerPath: string): string {
 
 `docker-compose.yml` addition:
 ```yaml
-- NANOCLAW_HOST_PROJECT_ROOT=/home/maryam/nanoclaw
+- NANOCLAW_HOST_PROJECT_ROOT=/home/user/nanoclaw
 ```
 
 When running on the host (not in Docker), `NANOCLAW_HOST_PROJECT_ROOT` is unset so `toHostPath()` is a no-op.
@@ -281,9 +281,9 @@ This doesn't speed up agent runs but prevents the OOM killer from randomly termi
 All services confirmed running:
 
 ```
-nanoclaw-main          Up   — orchestrator, Telegram bot @Mokado_bot online
+nanoclaw-main          Up   — orchestrator, Telegram bot online
 nanoclaw-agent:latest  Up   — agent containers spawning and completing successfully
 zeroclaw-agent         Up   — unaffected, isolated on port 42617
 ```
 
-Moka responds to Telegram messages, agent containers spawn with correct host mounts, credentials flow via stdin, and API calls reach Anthropic directly.
+The bot responds to Telegram messages, agent containers spawn with correct host mounts, credentials flow via stdin, and API calls reach Anthropic directly.
