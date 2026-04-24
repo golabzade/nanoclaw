@@ -152,9 +152,13 @@ async function runTask(
   let preRunNextRun: string | null = null;
   if (task.schedule_type === 'cron') {
     try {
-      const interval = CronExpressionParser.parse(task.schedule_value, { tz: TIMEZONE });
+      const interval = CronExpressionParser.parse(task.schedule_value, {
+        tz: TIMEZONE,
+      });
       preRunNextRun = interval.next().toISOString();
-    } catch { /* ignore parse errors, let the end-of-run logic handle it */ }
+    } catch {
+      /* ignore parse errors, let the end-of-run logic handle it */
+    }
   } else if (task.schedule_type === 'interval') {
     const ms = parseInt(task.schedule_value, 10);
     if (!isNaN(ms)) preRunNextRun = new Date(Date.now() + ms).toISOString();
@@ -213,10 +217,7 @@ async function runTask(
         }
         if (streamedOutput.status === 'error') {
           error = streamedOutput.error || 'Unknown error';
-          logger.error(
-            { taskId: task.id, error },
-            'Task streamed error',
-          );
+          logger.error({ taskId: task.id, error }, 'Task streamed error');
         }
       },
     );

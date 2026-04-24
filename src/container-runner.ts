@@ -88,7 +88,8 @@ function buildVolumeMounts(
 
   // Mount CA certificate if NODE_EXTRA_CA_CERTS or SSL_CERT_FILE is set
   // This is needed for the sandbox MITM proxy
-  const caCertSrc = process.env.NODE_EXTRA_CA_CERTS || process.env.SSL_CERT_FILE;
+  const caCertSrc =
+    process.env.NODE_EXTRA_CA_CERTS || process.env.SSL_CERT_FILE;
   if (caCertSrc && fs.existsSync(caCertSrc)) {
     const certDir = path.join(DATA_DIR, 'ca-cert');
     fs.mkdirSync(certDir, { recursive: true });
@@ -296,7 +297,8 @@ async function buildContainerArgs(
   }
 
   // Set NODE_EXTRA_CA_CERTS if we mounted a CA cert
-  const caCertSrc = process.env.NODE_EXTRA_CA_CERTS || process.env.SSL_CERT_FILE;
+  const caCertSrc =
+    process.env.NODE_EXTRA_CA_CERTS || process.env.SSL_CERT_FILE;
   if (caCertSrc) {
     const certFileName = path.basename(caCertSrc);
     args.push('-e', `NODE_EXTRA_CA_CERTS=/workspace/ca-cert/${certFileName}`);

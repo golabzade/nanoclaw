@@ -2,6 +2,25 @@ import fs from 'fs';
 import path from 'path';
 import { Bot, InputFile } from 'grammy';
 
+// Prepend RLM (U+200F) to lines whose dominant script is RTL (Farsi/Arabic).
+// This tells Telegram to render that line right-to-left regardless of where
+// the first LTR character appears — preventing misaligned mixed-language output.
+const RTL_CHARS = /[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]/g;
+const LTR_CHARS = /[a-zA-Z]/g;
+const RLM = '‏';
+
+function fixBidi(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => {
+      if (!line.trim()) return line;
+      const rtl = (line.match(RTL_CHARS) || []).length;
+      const ltr = (line.match(LTR_CHARS) || []).length;
+      return rtl > 0 && rtl >= ltr ? RLM + line : line;
+    })
+    .join('\n');
+}
+
 import {
   ASSISTANT_NAME,
   GROUPS_DIR,
@@ -117,6 +136,13 @@ export class TelegramChannel implements Channel {
         is_from_me: false,
       });
 
+      // React with 👀 to acknowledge receipt
+      ctx.api
+        .setMessageReaction(ctx.chat.id, ctx.message.message_id, [
+          { type: 'emoji', emoji: '👀' },
+        ])
+        .catch(() => {});
+
       logger.info(
         { chatJid, chatName, sender: senderName },
         'Telegram message stored',
@@ -149,7 +175,61 @@ export class TelegramChannel implements Channel {
       });
     };
 
-    this.bot.on('message:photo', (ctx) => storeNonText(ctx, '[Photo]'));
+    this.bot.on('message:photo', async (ctx) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) return;
+
+      const timestamp = new Date(ctx.message.date * 1000).toISOString();
+      const senderName =
+        ctx.from?.first_name ||
+        ctx.from?.username ||
+        ctx.from?.id?.toString() ||
+        'Unknown';
+      const caption = ctx.message.caption ? `\nCaption: ${ctx.message.caption}` : '';
+
+      try {
+        // Pick the largest available photo size
+        const photos = ctx.message.photo;
+        const largest = photos[photos.length - 1];
+        const file = await ctx.api.getFile(largest.file_id);
+        const url = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
+        const response = await fetch(url);
+        const arrayBuffer = await response.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+
+        const uploadsDir = path.join(GROUPS_DIR, group.folder, 'uploads');
+        fs.mkdirSync(uploadsDir, { recursive: true });
+        const filename = `photo-${Date.now()}.jpg`;
+        const savePath = path.join(uploadsDir, filename);
+        fs.writeFileSync(savePath, buffer);
+
+        const containerPath = `/workspace/group/uploads/${filename}`;
+        const content = `[Photo]${caption}\nSaved to: ${containerPath}\nUse the Read tool on this path to view the image.`;
+
+        this.opts.onChatMetadata(chatJid, timestamp);
+        this.opts.onMessage(chatJid, {
+          id: ctx.message.message_id.toString(),
+          chat_jid: chatJid,
+          sender: ctx.from?.id?.toString() || '',
+          sender_name: senderName,
+          content,
+          timestamp,
+          is_from_me: false,
+        });
+
+        ctx.api
+          .setMessageReaction(ctx.chat.id, ctx.message.message_id, [
+            { type: 'emoji', emoji: '👀' },
+          ])
+          .catch(() => {});
+
+        logger.info({ chatJid, filename }, 'Photo saved to workspace');
+      } catch (err) {
+        logger.error({ err }, 'Photo download error');
+        storeNonText(ctx, '[Photo — failed to save]');
+      }
+    });
     this.bot.on('message:video', (ctx) => storeNonText(ctx, '[Video]'));
     this.bot.on('message:voice', async (ctx) => {
       const chatJid = `tg:${ctx.chat.id}`;
@@ -408,10 +488,16 @@ export class TelegramChannel implements Channel {
       }
 
       // Regular text message
+      text = fixBidi(text);
       const MAX_LENGTH = 4096;
-      const sendWithMarkdown = async (chatId: string | number, chunk: string) => {
+      const sendWithMarkdown = async (
+        chatId: string | number,
+        chunk: string,
+      ) => {
         try {
-          await this.bot!.api.sendMessage(chatId, chunk, { parse_mode: 'Markdown' });
+          await this.bot!.api.sendMessage(chatId, chunk, {
+            parse_mode: 'Markdown',
+          });
         } catch {
           // Fallback to plain text if Markdown parsing fails
           await this.bot!.api.sendMessage(chatId, chunk);
