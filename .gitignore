@@ -15,6 +15,7 @@ groups/
 # Secrets
 *.keys.json
 .env
+google-credentials.json
 
 # Temp files
 .tmp-*
