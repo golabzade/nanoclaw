@@ -44,6 +44,13 @@ export interface TelegramChannelOpts {
   registeredGroups: () => Record<string, RegisteredGroup>;
 }
 
+// Valid Telegram reaction emojis — rotated randomly to feel more alive
+const REACTIONS = ['👀', '🔥', '⚡', '💯', '👌', '🫡', '🤓', '😎', '🎉', '🏆'] as const;
+type ReactionEmoji = (typeof REACTIONS)[number];
+function randomReaction(): ReactionEmoji {
+  return REACTIONS[Math.floor(Math.random() * REACTIONS.length)];
+}
+
 export class TelegramChannel implements Channel {
   name = 'telegram';
   prefixAssistantName = false;
@@ -139,9 +146,9 @@ export class TelegramChannel implements Channel {
       // React with 👀 to acknowledge receipt
       ctx.api
         .setMessageReaction(ctx.chat.id, ctx.message.message_id, [
-          { type: 'emoji', emoji: '👀' },
+          { type: 'emoji', emoji: randomReaction() },
         ])
-        .catch(() => {});
+        .catch(() => { });
 
       logger.info(
         { chatJid, chatName, sender: senderName },
@@ -186,7 +193,9 @@ export class TelegramChannel implements Channel {
         ctx.from?.username ||
         ctx.from?.id?.toString() ||
         'Unknown';
-      const caption = ctx.message.caption ? `\nCaption: ${ctx.message.caption}` : '';
+      const caption = ctx.message.caption
+        ? `\nCaption: ${ctx.message.caption}`
+        : '';
 
       try {
         // Pick the largest available photo size
@@ -220,9 +229,9 @@ export class TelegramChannel implements Channel {
 
         ctx.api
           .setMessageReaction(ctx.chat.id, ctx.message.message_id, [
-            { type: 'emoji', emoji: '👀' },
+            { type: 'emoji', emoji: randomReaction() },
           ])
-          .catch(() => {});
+          .catch(() => { });
 
         logger.info({ chatJid, filename }, 'Photo saved to workspace');
       } catch (err) {
