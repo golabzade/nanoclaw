@@ -23,9 +23,10 @@ services:
       - NODE_ENV=production
       - TZ=America/Toronto
       - ONECLI_URL=
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/google-credentials.json
       # Host path to the nanoclaw project root — needed so DinD agent container
       # mounts use real host paths instead of container-internal /app/ paths.
-      - NANOCLAW_HOST_PROJECT_ROOT=/home/user/nanoclaw  # ← set to your actual host path
+      - NANOCLAW_HOST_PROJECT_ROOT=/home/maryam/nanoclaw  # ← set to your actual host path
     stop_grace_period: 30s
     group_add:
       - "988" # GID of 'docker' group on the host

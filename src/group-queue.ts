@@ -148,7 +148,7 @@ export class GroupQueue {
   notifyIdle(groupJid: string): void {
     const state = this.getGroup(groupJid);
     state.idleWaiting = true;
-    if (state.pendingTasks.length > 0) {
+    if (state.pendingTasks.length > 0 || state.pendingMessages) {
       this.closeStdin(groupJid);
     }
   }
@@ -198,6 +198,10 @@ export class GroupQueue {
     reason: 'messages' | 'drain',
   ): Promise<void> {
     const state = this.getGroup(groupJid);
+    if (state.active) {
+      logger.warn({ groupJid, reason }, 'Container already active, skipping runForGroup');
+      return;
+    }
     state.active = true;
     state.idleWaiting = false;
     state.isTaskContainer = false;
@@ -233,6 +237,10 @@ export class GroupQueue {
 
   private async runTask(groupJid: string, task: QueuedTask): Promise<void> {
     const state = this.getGroup(groupJid);
+    if (state.active) {
+      logger.warn({ groupJid, taskId: task.id }, 'Container already active, skipping runTask');
+      return;
+    }
     state.active = true;
     state.idleWaiting = false;
     state.isTaskContainer = true;

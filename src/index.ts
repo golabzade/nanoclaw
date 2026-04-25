@@ -331,6 +331,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   await channel.setTyping?.(chatJid, true);
   let hadError = false;
   let outputSentToUser = false;
+  let lastSentOutput: string | null = null;
 
   const output = await runAgent(group, prompt, chatJid, async (result) => {
     // Streaming output callback — called for each agent result
@@ -342,9 +343,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.length} chars`);
-      if (text) {
-        await channel.sendMessage(chatJid, text);
+      if (text && text !== lastSentOutput) {
+        lastSentOutput = text;
         outputSentToUser = true;
+        try {
+          await channel.sendMessage(chatJid, text);
+          logger.info({ group: group.name, chars: text.length }, 'Message delivered to user');
+        } catch (sendErr) {
+          logger.error({ group: group.name, err: sendErr }, 'Failed to deliver message to user');
+        }
         // Advance cursor to cover any messages piped into this container since it started.
         // This prevents a retry from re-processing messages already responded to.
         const latestMessages = getMessagesSince(
@@ -357,6 +364,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             latestMessages[latestMessages.length - 1].timestamp;
           saveState();
         }
+      } else if (text && text === lastSentOutput) {
+        logger.warn({ group: group.name }, 'Duplicate output suppressed — same content already sent');
       }
       // Only reset idle timer on actual results, not session-update markers (result: null)
       resetIdleTimer();
@@ -435,12 +444,12 @@ async function runAgent(
   // Wrap onOutput to track session ID from streamed results
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
-        if (output.newSessionId) {
-          sessions[group.folder] = output.newSessionId;
-          setSession(group.folder, output.newSessionId);
-        }
-        await onOutput(output);
+      if (output.newSessionId) {
+        sessions[group.folder] = output.newSessionId;
+        setSession(group.folder, output.newSessionId);
       }
+      await onOutput(output);
+    }
     : undefined;
 
   try {
@@ -611,14 +620,15 @@ async function startMessageLoop(): Promise<void> {
               { chatJid, count: messagesToSend.length },
               'Piped messages to active container',
             );
-            // Do NOT advance lastAgentTimestamp here. The cursor only moves
-            // when the container actually responds (see processGroupMessages onOutput).
-            // If the container dies before responding, lastAgentTimestamp stays put
-            // and the messages will be found and retried by the next processGroupMessages run.
-            //
-            // Mark pending so drainGroup retries with a fresh container if this one
-            // dies without sending a response.
-            queue.enqueueMessageCheck(chatJid); // sets pendingMessages=true since container is active
+            // Advance the cursor so drainGroup/processGroupMessages won't re-fetch
+            // and re-process these messages in a new container (which causes duplicates).
+            // The active container already received them via IPC — if it dies before
+            // responding, the messages are lost but that's better than duplicating them.
+            if (messagesToSend.length > 0) {
+              lastAgentTimestamp[chatJid] =
+                messagesToSend[messagesToSend.length - 1].timestamp;
+              saveState();
+            }
             // Show typing indicator while the container processes the piped message
             channel
               .setTyping?.(chatJid, true)
@@ -863,7 +873,7 @@ async function main(): Promise<void> {
 const isDirectRun =
   process.argv[1] &&
   new URL(import.meta.url).pathname ===
-    new URL(`file://${process.argv[1]}`).pathname;
+  new URL(`file://${process.argv[1]}`).pathname;
 
 if (isDirectRun) {
   main().catch((err) => {

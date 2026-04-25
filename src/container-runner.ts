@@ -278,7 +278,15 @@ async function buildContainerArgs(
   containerName: string,
   agentIdentifier?: string,
 ): Promise<string[]> {
-  const args: string[] = ['run', '-i', '--rm', '--name', containerName];
+  const args: string[] = [
+    'run',
+    '-i',
+    '--rm',
+    '--memory=512m',
+    '--memory-swap=1g',
+    '--name',
+    containerName,
+  ];
 
   // Pass host timezone
   args.push('-e', `TZ=${TIMEZONE}`);
