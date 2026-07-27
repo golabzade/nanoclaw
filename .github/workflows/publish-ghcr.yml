@@ -1,0 +1,51 @@
+name: Publish multiple images to GHCR
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    name: Build and push Docker images to GHCR
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image:
+          - name: agent-builder
+            context: ./container
+            file: Dockerfile
+            tagSuffix: agent-builder
+          - name: main
+            context: .
+            file: Dockerfile.main
+            tagSuffix: main
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "Build and push image (matrix: ${{ matrix.image.name }})"
+        uses: docker/build-push-action@v4
+        with:
+          context: ${{ matrix.image.context }}
+          file: ${{ matrix.image.file }}
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ matrix.image.tagSuffix }}-latest
+            ghcr.io/${{ github.repository }}:${{ matrix.image.tagSuffix }}-${{ github.sha }}
