@@ -16,11 +16,11 @@ jobs:
         image:
           - name: agent-builder
             context: ./container
-            file: Dockerfile
+            file: ./container/Dockerfile
             tagSuffix: agent-builder
           - name: main
             context: .
-            file: Dockerfile.main
+            file: ./Dockerfile.main
             tagSuffix: main
     steps:
       - name: Checkout
